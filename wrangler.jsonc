@@ -1,0 +1,59 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "trading-journal",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "placement": {
+    "mode": "smart"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01
+    }
+  },
+  "triggers": {
+    "crons": ["0 18 * * *"]
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "STATIC_ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/i/*"]
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "services": [
+    {
+      "binding": "TD_FOREX",
+      "service": "td-forex-mcp"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "trading-journal-db",
+      "database_id": "72aa611b-ef38-49cc-9773-1fc74a87be78"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "trading-journal-images"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "trading-journal-backup",
+      "binding": "BACKUP_WORKFLOW",
+      "class_name": "BackupWorkflow"
+    }
+  ]
+}

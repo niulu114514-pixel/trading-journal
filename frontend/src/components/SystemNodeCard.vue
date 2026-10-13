@@ -1,0 +1,8 @@
+<script setup lang="ts">
+import { Handle, Position } from '@vue-flow/core'
+import type { SystemNode } from '../types'
+
+const props=defineProps<{data:{node:SystemNode;childCount:number;typeLabel?:string;typeColor?:string|null;onAdd:(id:number)=>void;onEdit:(node:SystemNode)=>void;onDelete:(node:SystemNode)=>void;onToggle:(node:SystemNode)=>void}}>()
+const names:Record<string,[string,string]>={root:['系统','◎'],setup:['市场环境','◈'],condition:['判断条件','◇'],entry:['入场','↗'],risk:['风控','◉'],exit:['出场','↘'],review:['复盘','✓'],note:['备注','•']}
+</script>
+<template><article class="flow-node" :class="{'flow-node-root':data.node.node_type==='root'}" :style="data.typeColor?{'--node-color':data.typeColor}:undefined" title="双击编辑节点" @dblclick.stop="data.onEdit(data.node)"><Handle v-if="data.node.parent_id!==null" type="target" :position="Position.Left"/><div class="flow-node-head"><span>{{names[data.node.node_type]?.[1]||'◆'}}</span><b>{{data.typeLabel||names[data.node.node_type]?.[0]||data.node.node_type}}</b><button v-if="data.childCount" class="nodrag" @click.stop="data.onToggle(data.node)" @dblclick.stop>{{data.node.is_collapsed?`+${data.childCount}`:'−'}}</button></div><h3>{{data.node.title}}</h3><p v-if="data.node.content">{{data.node.content}}</p><div v-if="data.node.rule_id" class="flow-rule"><span>规则</span>{{data.node.rule_title||`#${data.node.rule_id}`}}</div><div class="flow-actions nodrag" @dblclick.stop><button @click.stop="data.onAdd(data.node.id)">+ 子节点</button><button @click.stop="data.onEdit(data.node)">编辑</button><button v-if="data.node.parent_id!==null" class="danger" @click.stop="data.onDelete(data.node)">删除</button></div><Handle type="source" :position="Position.Right"/></article></template>
