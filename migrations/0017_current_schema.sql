@@ -12,3 +12,7 @@ WHERE config_key LIKE 'ai_%'
 
 ALTER TABLE trades DROP COLUMN chart_image;
 ALTER TABLE trading_systems DROP COLUMN original_prompt;
+
+-- This repository keeps only the current migration baseline.
+DELETE FROM d1_migrations
+WHERE name <> '0017_current_schema.sql';
