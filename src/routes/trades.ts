@@ -27,8 +27,7 @@ const tradeFieldsSchema = z.object({
   return_amount: z.number().min(-1e9).max(1e9).nullable().optional(),
   risk_reward_ratio: z.number().min(0).max(1e6).nullable().optional(),
   result: z.enum(['胜', '败', '平']).nullable().optional(),
-  review: z.string().min(1).max(2000).nullable().optional(),
-  chart_image: z.string().min(1).max(500).nullable().optional()
+  review: z.string().min(1).max(2000).nullable().optional()
 });
 
 const dailyChartSchema = z.object({
@@ -167,15 +166,15 @@ export function registerTradeRoutes(app: Hono<AppEnv>, dependencies: TradeRouteD
     }
     const trade = parsed.data;
     const result = await context.env.DB.prepare(
-      `INSERT INTO trades (symbol,code,entry_time,lots,entry_price,exit_price,direction,timeframe,trading_system_id,trade_type,market_cycle,patterns,trade_logic,exit_type,return_amount,risk_reward_ratio,result,review,chart_image)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO trades (symbol,code,entry_time,lots,entry_price,exit_price,direction,timeframe,trading_system_id,trade_type,market_cycle,patterns,trade_logic,exit_type,return_amount,risk_reward_ratio,result,review)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       trade.symbol || 'XAUUSD', trade.code || null, trade.entry_time || null, trade.lots ?? 1,
       trade.entry_price ?? null, trade.exit_price ?? null,
       trade.direction || '多', trade.timeframe || '5M', trade.trading_system_id ?? null,
       trade.trade_type || null, trade.market_cycle || null, trade.patterns || null, trade.trade_logic || null,
       trade.exit_type || null, trade.return_amount ?? null, trade.risk_reward_ratio ?? null,
-      trade.result || null, trade.review || null, trade.chart_image || null
+      trade.result || null, trade.review || null
     ).run();
     const tradeId = Number(result.meta.last_row_id);
     await dependencies.captureTradeStrategySnapshot(context.env.DB, tradeId, trade.trading_system_id);
@@ -196,7 +195,7 @@ export function registerTradeRoutes(app: Hono<AppEnv>, dependencies: TradeRouteD
 
     const updatable = ['symbol', 'code', 'entry_time', 'lots', 'entry_price', 'exit_price', 'direction', 'timeframe', 'trading_system_id',
       'trade_type', 'market_cycle', 'patterns', 'trade_logic', 'exit_type', 'return_amount', 'risk_reward_ratio',
-      'result', 'review', 'chart_image'] as const;
+      'result', 'review'] as const;
     const fields: string[] = [];
     const values: unknown[] = [];
     for (const field of updatable) {

@@ -2,8 +2,6 @@ import type { Context, Hono } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../app-types';
 import type { MindmapSnapshot } from '../domain/mindmap';
-import { aiErrorMessage } from '../services/ai-protocol';
-import { createAiJob, updateAiJob } from '../services/ai-jobs';
 import {
   calculateMindmapQuality,
   cloneMindmap,
@@ -21,7 +19,6 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     name: z.string().trim().min(1).max(100),
     category: z.string().trim().min(1).max(60).optional(),
     description: z.string().max(2000).nullable().optional(),
-    original_prompt: z.string().max(12000).nullable().optional(),
     resource_url: z.union([z.literal(''), z.string().url().max(2048)]).nullable().optional(),
     markets: z.string().max(255).nullable().optional(),
     timeframes: z.string().max(255).nullable().optional(),
@@ -58,7 +55,7 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     whereParts.push('s.is_template = 0');
     if (status && ['draft', 'active', 'archived'].includes(status)) { whereParts.push('s.status = ?'); args.push(status); }
     if (category) { whereParts.push('s.category = ?'); args.push(category); }
-    if (query) { whereParts.push('(s.name LIKE ? OR s.description LIKE ? OR s.original_prompt LIKE ?)'); args.push(`%${query}%`,`%${query}%`,`%${query}%`); }
+    if (query) { whereParts.push('(s.name LIKE ? OR s.description LIKE ?)'); args.push(`%${query}%`,`%${query}%`); }
     const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
     const havingParts:string[]=[];
     if(minNodes>0){havingParts.push('COUNT(DISTINCT n.id) >= ?');args.push(minNodes);}
@@ -132,10 +129,10 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     const category = await resolveActiveMindmapCategory(db, p.category);
     if (!category) return c.json({ error: '脑图分类不存在或已停用，请先创建或启用分类' }, 400);
     const created = await db.prepare(
-      `INSERT INTO trading_systems (name, category, description, original_prompt, resource_url, markets, timeframes, status, color)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO trading_systems (name, category, description, resource_url, markets, timeframes, status, color)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
-      p.name, category, p.description || null, p.original_prompt || p.description || p.name, p.resource_url || null, p.markets || null, p.timeframes || null,
+      p.name, category, p.description || null, p.resource_url || null, p.markets || null, p.timeframes || null,
       p.status || 'draft', p.color || '#3ec9c5'
     ).run();
     const systemId = Number(created.meta.last_row_id);
@@ -173,7 +170,7 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     }
     const fields: string[] = [];
     const values: unknown[] = [];
-    for (const field of ['name', 'category', 'description', 'original_prompt', 'resource_url', 'markets', 'timeframes', 'status', 'color'] as const) {
+    for (const field of ['name', 'category', 'description', 'resource_url', 'markets', 'timeframes', 'status', 'color'] as const) {
       if (parsed.data[field] !== undefined) {
         fields.push(`${field} = ?`);
         values.push(parsed.data[field]);
@@ -269,76 +266,6 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
       c.env.DB.prepare('UPDATE trade_strategy_snapshots SET version_id=NULL WHERE version_id=?').bind(versionId),
       c.env.DB.prepare('DELETE FROM mindmap_versions WHERE id=? AND system_id=?').bind(versionId,systemId)
     ]);
-    return c.json({success:true});
-  });
-
-  app.post('/api/systems/:id/refinements', async (c) => {
-    const systemId=Number(c.req.param('id'));
-    const body=await c.req.json<any>().catch(()=>({}));
-    const instructions=String(body?.instructions || '').trim().slice(0,4000);
-    if(!Number.isInteger(systemId)||!await c.env.DB.prepare('SELECT id FROM trading_systems WHERE id=?').bind(systemId).first())return c.json({error:'脑图不存在'},404);
-    const jobId=await createAiJob(c.env,'mindmap_refinement',String(systemId));
-    try{
-      await c.env.BACKUP_WORKFLOW.create({id:jobId,params:{action:'mindmap_refinement',jobId,systemId,instructions},retention:{successRetention:'7 days',errorRetention:'30 days'},locationHint:'apac'});
-      return c.json({success:true,status:'queued',job_id:jobId},202);
-    }catch(error){await updateAiJob(c.env,jobId,'failed',{error:aiErrorMessage(error)});return c.json({error:'无法启动 AI 精修后台任务'},500);}
-  });
-
-  // 兼容旧客户端：现在只生成草稿，不再未经确认直接覆盖脑图。
-  app.post('/api/systems/:id/refine', async (c) => {
-    const systemId=Number(c.req.param('id'));
-    const body=await c.req.json<any>().catch(()=>({}));
-    const instructions=String(body?.instructions||'').trim().slice(0,4000);
-    if(!Number.isInteger(systemId)||!await c.env.DB.prepare('SELECT id FROM trading_systems WHERE id=?').bind(systemId).first())return c.json({error:'脑图不存在'},404);
-    const jobId=await createAiJob(c.env,'mindmap_refinement',String(systemId));
-    try{await c.env.BACKUP_WORKFLOW.create({id:jobId,params:{action:'mindmap_refinement',jobId,systemId,instructions},retention:{successRetention:'7 days',errorRetention:'30 days'},locationHint:'apac'});return c.json({success:true,status:'queued',job_id:jobId},202);}
-    catch(error){await updateAiJob(c.env,jobId,'failed',{error:aiErrorMessage(error)});return c.json({error:'无法启动 AI 精修后台任务'},500);}
-  });
-
-  app.get('/api/ai/jobs/:id',async(c)=>{
-    const row=await c.env.DB.prepare('SELECT * FROM ai_jobs WHERE id=?').bind(c.req.param('id')).first<any>();
-    if(!row)return c.json({error:'AI 后台任务不存在'},404);
-    return c.json({...row,result:row.result_json?JSON.parse(row.result_json):null,result_json:undefined});
-  });
-
-  app.get('/api/systems/:id/refinements/:draftId',async(c)=>{
-    const row=await c.env.DB.prepare('SELECT * FROM mindmap_refinement_drafts WHERE id=? AND system_id=?').bind(c.req.param('draftId'),Number(c.req.param('id'))).first<any>();
-    if(!row)return c.json({error:'精修草稿不存在'},404);
-    const proposed=JSON.parse(row.proposed_snapshot_json) as MindmapSnapshot;
-    return c.json({...row,draft_id:row.id,node_count:proposed.nodes.length,quality:calculateMindmapQuality(proposed.nodes as Record<string,any>[]),base:JSON.parse(row.base_snapshot_json),proposed,diff:JSON.parse(row.diff_json),usage:JSON.parse(row.usage_json||'null')});
-  });
-
-  app.post('/api/systems/:id/refinements/:draftId/apply',async(c)=>{
-    const systemId=Number(c.req.param('id')),draftId=c.req.param('draftId');
-    const body=await c.req.json<any>().catch(()=>({}));
-    const row=await c.env.DB.prepare("SELECT * FROM mindmap_refinement_drafts WHERE id=? AND system_id=? AND status='draft'").bind(draftId,systemId).first<any>();
-    if(!row)return c.json({error:'精修草稿不存在或已处理'},404);
-    const system=await c.env.DB.prepare('SELECT updated_at FROM trading_systems WHERE id=?').bind(systemId).first<{updated_at:string}>();
-    if(!system)return c.json({error:'脑图不存在'},404);
-    if(system.updated_at!==row.base_updated_at && body?.force!==true)return c.json({error:'脑图在草稿生成后已被修改，请重新生成精修草稿',code:'MINDMAP_CHANGED'},409);
-    try{
-      const proposed=JSON.parse(row.proposed_snapshot_json) as MindmapSnapshot;
-      const base=JSON.parse(row.base_snapshot_json) as MindmapSnapshot;
-      const excluded=new Set((Array.isArray(body?.excluded_node_ids)?body.excluded_node_ids:[]).map(Number));
-      let changed=true;
-      while(changed){changed=false;for(const node of proposed.nodes)if(node.parent_id!==null&&excluded.has(Number(node.parent_id))&&!excluded.has(Number(node.id))){excluded.add(Number(node.id));changed=true;}}
-      const selectedNodes=proposed.nodes.filter(node=>node.parent_id===null||!excluded.has(Number(node.id))).map(node=>({...node}));
-      const preserve=new Set((Array.isArray(body?.preserve_removed_node_ids)?body.preserve_removed_node_ids:[]).map(Number));
-      let expanded=true;while(expanded){expanded=false;for(const node of base.nodes)if(node.parent_id!==null&&preserve.has(Number(node.parent_id))&&!preserve.has(Number(node.id))){preserve.add(Number(node.id));expanded=true;}}
-      const maxId=Math.max(...selectedNodes.map(node=>Number(node.id)),1);let nextId=maxId+1;const oldToNew=new Map<number,number>();
-      for(const node of base.nodes.filter(item=>item.parent_id!==null&&preserve.has(Number(item.id)))){const newId=nextId++;oldToNew.set(Number(node.id),newId);selectedNodes.push({...node,id:newId,parent_id:oldToNew.get(Number(node.parent_id))||selectedNodes[0].id,sort_order:999});}
-      if(selectedNodes.length<2)return c.json({error:'至少需要保留一个非根节点'},400);
-      const versionId=await saveMindmapVersion(c.env.DB,systemId,'before_refine_apply','应用 AI 精修草稿前');
-      await replaceMindmapFromSnapshot(c.env.DB,systemId,{...proposed,nodes:selectedNodes});
-      await c.env.DB.prepare("UPDATE mindmap_refinement_drafts SET status='applied',applied_at=datetime('now') WHERE id=?").bind(draftId).run();
-      const next=await loadMindmapSnapshot(c.env.DB,systemId);
-      return c.json({success:true,version_id:versionId,node_count:next.nodes.length,quality:calculateMindmapQuality(next.nodes as Record<string,any>[])});
-    }catch(error){return c.json({error:error instanceof Error?error.message:'应用精修草稿失败'},400);}
-  });
-
-  app.delete('/api/systems/:id/refinements/:draftId',async(c)=>{
-    const result=await c.env.DB.prepare("UPDATE mindmap_refinement_drafts SET status='discarded' WHERE id=? AND system_id=? AND status='draft'").bind(c.req.param('draftId'),Number(c.req.param('id'))).run();
-    if(!result.meta.changes)return c.json({error:'精修草稿不存在或已处理'},404);
     return c.json({success:true});
   });
 

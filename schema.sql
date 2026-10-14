@@ -28,7 +28,6 @@ CREATE TABLE trades (
   result TEXT,                                  -- 胜/败/平
   -- 复盘总结
   review TEXT,                                  -- 反馈/复盘
-  chart_image TEXT,                             -- K线图（base64 或 URL）
 
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -168,7 +167,6 @@ CREATE TABLE trading_systems (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 , category TEXT NOT NULL DEFAULT '交易系统', resource_url TEXT,
-  original_prompt TEXT NOT NULL DEFAULT '',
   is_template INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS "trading_system_nodes" (
@@ -195,39 +193,6 @@ CREATE TABLE mindmap_versions (
   snapshot_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (system_id) REFERENCES trading_systems(id) ON DELETE CASCADE
-);
-CREATE TABLE ai_conversations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  title TEXT NOT NULL DEFAULT '新对话',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-CREATE TABLE ai_action_batches (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  conversation_id INTEGER NOT NULL,
-  actions_json TEXT NOT NULL DEFAULT '[]',
-  undo_json TEXT NOT NULL DEFAULT '[]',
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'rolled_back')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  rolled_back_at TEXT,
-  FOREIGN KEY (conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE
-);
-CREATE TABLE ai_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  conversation_id INTEGER NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-  content TEXT NOT NULL,
-  actions_json TEXT,
-  analysis_json TEXT,
-  provider TEXT,
-  model TEXT,
-  usage_json TEXT,
-  action_batch_id INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE,
-  FOREIGN KEY (action_batch_id) REFERENCES ai_action_batches(id) ON DELETE SET NULL
 );
 CREATE TABLE backups (
   id TEXT PRIMARY KEY,
@@ -259,27 +224,6 @@ CREATE TABLE maintenance_jobs (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   completed_at TEXT
 );
-CREATE TABLE ai_jobs (
-  id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('mindmap_refinement')),
-  target_id TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','completed','failed')),
-  result_json TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  completed_at TEXT
-);
-CREATE TABLE ai_daily_usage (
-  usage_date TEXT PRIMARY KEY,
-  cf_requests INTEGER NOT NULL DEFAULT 0,
-  cf_estimated_tokens INTEGER NOT NULL DEFAULT 0,
-  cf_actual_requests INTEGER NOT NULL DEFAULT 0,
-  cf_input_tokens INTEGER NOT NULL DEFAULT 0,
-  cf_output_tokens INTEGER NOT NULL DEFAULT 0,
-  cf_neurons REAL NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 CREATE TABLE trade_strategy_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   trade_id INTEGER NOT NULL UNIQUE,
@@ -306,22 +250,6 @@ CREATE TABLE trade_rule_checks (
   FOREIGN KEY (trade_id) REFERENCES trades(id) ON DELETE CASCADE,
   FOREIGN KEY (rule_id) REFERENCES trading_rules(id) ON DELETE SET NULL
 );
-CREATE TABLE mindmap_refinement_drafts (
-  id TEXT PRIMARY KEY,
-  system_id INTEGER NOT NULL,
-  base_updated_at TEXT NOT NULL,
-  base_snapshot_json TEXT NOT NULL,
-  proposed_snapshot_json TEXT NOT NULL,
-  diff_json TEXT NOT NULL,
-  instructions TEXT,
-  summary TEXT,
-  model TEXT,
-  usage_json TEXT,
-  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','applied','discarded')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  applied_at TEXT,
-  FOREIGN KEY (system_id) REFERENCES trading_systems(id) ON DELETE CASCADE
-);
 CREATE INDEX idx_trades_entry_time ON trades(entry_time);
 CREATE INDEX idx_trades_symbol ON trades(symbol);
 CREATE INDEX idx_trading_rules_category ON trading_rules(category);
@@ -346,17 +274,12 @@ CREATE INDEX idx_system_nodes_rule ON trading_system_nodes(rule_id);
 CREATE INDEX idx_trading_systems_category ON trading_systems(category);
 CREATE INDEX idx_trading_systems_template ON trading_systems(is_template, updated_at DESC);
 CREATE INDEX idx_mindmap_versions_system ON mindmap_versions(system_id, id DESC);
-CREATE INDEX idx_ai_conversations_user_updated ON ai_conversations(user_id, updated_at DESC);
-CREATE INDEX idx_ai_messages_conversation ON ai_messages(conversation_id, id);
-CREATE INDEX idx_ai_batches_conversation ON ai_action_batches(conversation_id, id);
 CREATE INDEX idx_backups_created ON backups(created_at DESC);
 CREATE INDEX idx_maintenance_jobs_created ON maintenance_jobs(created_at DESC);
-CREATE INDEX idx_ai_jobs_created ON ai_jobs(created_at DESC);
 CREATE INDEX idx_trades_result_entry_time ON trades(result, entry_time DESC);
 CREATE INDEX idx_trade_strategy_snapshots_trade ON trade_strategy_snapshots(trade_id);
 CREATE INDEX idx_trade_rule_checks_trade ON trade_rule_checks(trade_id, sort_order, id);
 CREATE INDEX idx_trade_rule_checks_status ON trade_rule_checks(status, trade_id);
-CREATE INDEX idx_refinement_drafts_system ON mindmap_refinement_drafts(system_id, created_at DESC);
 
 -- 新数据库默认配置
 INSERT OR IGNORE INTO settings (category, label, value, sort_order) VALUES
@@ -416,38 +339,17 @@ INSERT OR IGNORE INTO app_config (config_key, config_value, description) VALUES
   ('mcp_endpoint', '/api/mcp', 'MCP 端点路径'),
   ('tg_bot_token', '', 'Telegram Bot Token'),
   ('tg_chat_id', '', 'Telegram Chat ID'),
-  ('image_storage', 'r2', '图片存储方式: r2 / tg / both'),
-  ('market_data_url', '', '行情服务 URL（td-forex-mcp）'),
-  ('market_data_key', '', '行情服务访问密钥'),
-  ('ai_enabled', 'false', '是否启用站内 AI 工作台'),
-  ('ai_base_url', 'https://api.openai.com/v1', 'AI API 基础地址或完整端点'),
-  ('ai_api_format', 'auto', 'AI API 格式：自动、Responses 或 Chat Completions'),
-  ('ai_model', '', 'AI 模型 ID'),
-  ('ai_api_key', '', 'AI API 密钥'),
-  ('ai_cf_fallback_enabled', 'true', '主模型不可用时启用 Cloudflare Workers AI'),
-  ('ai_cf_fallback_model', '@cf/meta/llama-3.2-3b-instruct', 'Cloudflare Workers AI 备用模型'),
-  ('ai_cf_daily_neuron_limit', '9000', 'Cloudflare Workers AI UTC 每日账户神经元保护阈值'),
-  ('ai_cf_account_id', '', '可选：用于动态获取 Workers AI 模型目录和账户用量的 Cloudflare Account ID'),
-  ('ai_cf_api_token', '', '可选：Workers AI Read 权限令牌，用于读取模型目录和账户用量');
+  ('image_storage', 'r2', '图片存储方式: r2 / tg / both');
 
 INSERT OR IGNORE INTO app_config (config_key, config_value, description) VALUES
   ('backup_retention', '7', '自动保留最近多少份完整备份');
 
--- 新数据库使用完整基线创建后，把基线已包含的增量迁移登记为已应用，
--- 以后即可安全执行 `wrangler d1 migrations apply`。
+-- 新数据库使用完整基线创建后，把当前清理迁移登记为已应用。
 CREATE TABLE IF NOT EXISTS d1_migrations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT UNIQUE,
   applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
-INSERT OR IGNORE INTO d1_migrations(name) VALUES
-  ('0004_mindmap_refinement.sql'),
-  ('0005_strategy_refinement_backup.sql'),
-  ('0006_folders_and_shares.sql'),
-  ('0007_burn_after_read.sql'),
-  ('0008_security_and_maintenance.sql'),
-  ('0009_ai_provider_fallback.sql'),
-  ('0010_ai_jobs_and_limits.sql'),
-  ('0011_ai_stream_news_usage.sql');
+INSERT OR IGNORE INTO d1_migrations(name) VALUES ('0017_current_schema.sql');
 
 COMMIT;

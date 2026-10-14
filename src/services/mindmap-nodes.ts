@@ -11,9 +11,6 @@ export type MindmapBatchNode = {
 
 export type MindmapNodeTypeOption = { value: string; label?: string };
 
-export const DEFAULT_MINDMAP_REFINEMENT_INSTRUCTIONS =
-  '结合原始提示词和当前脑图，删除重复、矛盾或空泛节点，补齐缺失的判断条件、执行动作、量化阈值、例外、失效条件、风险处理和复盘标准。每个节点说明必须是可独立阅读的完整句子，至少 8 个、最多 2000 个字符；不得只写“等待确认”“严格执行”等口号。保持层级清晰，节点数量由内容复杂度决定，不为凑数重复。';
-
 export function normalizeMindmapNodeType(
   rawType: unknown,
   title: unknown,
@@ -39,25 +36,6 @@ export function normalizeMindmapNodeType(
     }
   }
   return available.find(option => option.value === 'condition')?.value || available[0].value;
-}
-
-export function normalizeAiMindmapNodes(raw: unknown, options: MindmapNodeTypeOption[] = []): unknown {
-  if (!Array.isArray(raw)) return raw;
-  return raw.map((value, index) => {
-    if (!value || typeof value !== 'object') return value;
-    const node = value as Record<string, unknown>;
-    const title = String(node.title || `节点 ${index + 1}`).trim();
-    let content = String(node.content || '').trim();
-    if (content.length < 8) {
-      const fragment = content ? `${content}；` : '';
-      content = `${title}：${fragment}请明确判断依据、执行动作、结果记录和例外处理。`;
-    }
-    if (content.length > 2000) content = content.slice(0, 2000);
-    const nodeType = options.length
-      ? normalizeMindmapNodeType(node.node_type, title, content, options)
-      : node.node_type;
-    return { ...node, content, node_type: nodeType };
-  });
 }
 
 export function parseMindmapBatchNodes(raw: unknown): MindmapBatchNode[] {

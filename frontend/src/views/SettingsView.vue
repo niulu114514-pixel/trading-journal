@@ -364,7 +364,7 @@ onBeforeUnmount(() => {
     <header class="page-head">
       <div>
         <h1>自定义设置</h1>
-        <p>统一维护表单选项、行情连接、图片存储与账户安全</p>
+        <p>统一维护表单选项、图片存储、备份与账户安全</p>
       </div>
       <n-button v-if="categories[active]" type="primary" @click="open()"
         >新增选项</n-button

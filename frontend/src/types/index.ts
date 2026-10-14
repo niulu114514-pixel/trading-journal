@@ -22,7 +22,6 @@ export interface Trade {
   risk_reward_ratio?: number | null
   result?: '胜' | '败' | '平' | null
   review?: string | null
-  chart_image?: string | null
   daily_chart_id?: number | null
   daily_chart_image?: string | null
   created_at: string
@@ -56,7 +55,6 @@ export interface TradingSystemSummary {
   name: string
   category?: string | null
   description?: string | null
-  original_prompt?: string | null
   resource_url?: string | null
   markets?: string | null
   timeframes?: string | null

@@ -54,7 +54,7 @@ export async function ensureSensitiveConfigEncrypted(env: Bindings): Promise<voi
   if (!env.CONFIG_ENCRYPTION_KEY) throw new Error('CONFIG_ENCRYPTION_KEY 未配置，不能安全读取敏感配置');
   const rows = await env.DB.prepare(
     `SELECT config_key,config_value FROM app_config
-     WHERE config_key IN ('tg_bot_token','market_data_key','ai_api_key','ai_cf_api_token')`
+     WHERE config_key = 'tg_bot_token'`
   ).all<{ config_key: string; config_value: string }>();
   for (const row of rows.results) {
     if (!row.config_value || row.config_value.startsWith('enc$v1$')) continue;
@@ -67,4 +67,4 @@ export async function ensureSensitiveConfigEncrypted(env: Bindings): Promise<voi
 import type { Bindings } from '../app-types';
 
 export const MASKED_CONFIG_VALUE = '••••••••';
-export const SENSITIVE_CONFIG_KEYS = new Set(['tg_bot_token', 'market_data_key', 'ai_api_key', 'ai_cf_api_token']);
+export const SENSITIVE_CONFIG_KEYS = new Set(['tg_bot_token']);
