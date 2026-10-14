@@ -72,6 +72,12 @@ describe('modular route registration', () => {
 
     const stats = await SELF.fetch('https://example.com/api/stats/series?granularity=quarter', { headers: { Cookie: cookie } });
     expect(stats.status).toBe(400);
+
+    const invalidRange = await SELF.fetch('https://example.com/api/stats/series?granularity=day&from=2026-02-30', { headers: { Cookie: cookie } });
+    expect(invalidRange.status).toBe(400);
+
+    const reversedRange = await SELF.fetch('https://example.com/api/stats/series?granularity=day&from=2026-10-31&to=2026-10-01', { headers: { Cookie: cookie } });
+    expect(reversedRange.status).toBe(400);
   });
 
   it('stores multiple timeframes and keeps the entered risk/reward ratio unchanged', async () => {

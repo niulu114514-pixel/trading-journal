@@ -7,11 +7,37 @@ function boundedLimit(value: string | undefined, fallback: number, maximum: numb
   return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), maximum) : fallback;
 }
 
+function validDate(value: string | undefined): value is string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 export function registerStatsRoutes(app: Hono<AppEnv>): void {
   app.get('/api/stats/series', async context => {
     const granularity = context.req.query('granularity') || 'month';
     const period = statsPeriodSql(granularity);
     if (!period) return context.json({ error: 'granularity 仅支持 day / week / month / year' }, 400);
+
+    const from = context.req.query('from');
+    const to = context.req.query('to');
+    if ((from && !validDate(from)) || (to && !validDate(to))) {
+      return context.json({ error: 'from 和 to 必须是有效的 YYYY-MM-DD 日期' }, 400);
+    }
+    if (from && to && from >= to) {
+      return context.json({ error: 'to 必须晚于 from' }, 400);
+    }
+
+    const filters = ["entry_time IS NOT NULL", "entry_time != ''"];
+    const filterBindings: string[] = [];
+    if (from) {
+      filters.push('entry_time >= ?');
+      filterBindings.push(from);
+    }
+    if (to) {
+      filters.push('entry_time < ?');
+      filterBindings.push(to);
+    }
 
     const statement = context.env.DB.prepare(
       `SELECT ${period.expression} as period,
@@ -21,11 +47,13 @@ export function registerStatsRoutes(app: Hono<AppEnv>): void {
         COALESCE(SUM(return_amount), 0) as total_return,
         COALESCE(ROUND(AVG(risk_reward_ratio), 2), 0) as avg_rr
        FROM trades
-       WHERE entry_time IS NOT NULL AND entry_time != ''
+       WHERE ${filters.join(' AND ')}
        GROUP BY period ORDER BY period DESC LIMIT ?`
     );
-    const limit = boundedLimit(context.req.query('limit'), 30, 120);
-    const stats = period.format ? await statement.bind(period.format, limit).all() : await statement.bind(limit).all();
+    const limit = boundedLimit(context.req.query('limit'), 30, 366);
+    const bindings: Array<string | number> = [...filterBindings, limit];
+    if (period.format) bindings.unshift(period.format);
+    const stats = await statement.bind(...bindings).all();
     return context.json({ granularity, series: stats.results });
   });
 
