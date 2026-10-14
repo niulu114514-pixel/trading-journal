@@ -36,22 +36,6 @@ const imageStats = reactive({ total: 0, totalBytes: 0 });
 const backups = ref<BackupEntry[]>([]);
 const backupName = ref("");
 const backupBusy = ref(false);
-const aiModels = ref<{ label: string; value: string }[]>([]);
-const cfModels = ref<{ label: string; value: string }[]>([]);
-const loadingAiModels = ref(false);
-const cfUsage = reactive({
-  neurons: 0,
-  effective_neurons: 0,
-  local_neurons: 0,
-  local_requests: 0,
-  account_requests: null as number | null,
-  neuron_limit: 9000,
-  reset_at: "00:00 UTC",
-  source: "local_fallback",
-  warning: "",
-});
-const aiTesting = ref<"primary" | "cloudflare" | "">("");
-const aiTestResult = ref<any>(null);
 let backupPoll: number | undefined;
 const maintenancePolls = new Set<number>();
 const categories: Record<string, string> = {
@@ -95,24 +79,7 @@ const config = reactive({
   app_name: "交易日志系统",
   default_symbol: "XAUUSD",
   mcp_enabled: true,
-  market_data_url: "",
-  market_data_key: "",
-  ai_enabled: false,
-  ai_base_url: "https://api.openai.com/v1",
-  ai_api_format: "auto",
-  ai_model: "",
-  ai_api_key: "",
-  ai_cf_fallback_enabled: true,
-  ai_cf_fallback_model: "@cf/meta/llama-3.2-3b-instruct",
-  ai_cf_daily_neuron_limit: 9000,
-  ai_cf_account_id: "",
-  ai_cf_api_token: "",
 });
-const aiFormatOptions = [
-  { label: "自动识别（推荐）", value: "auto" },
-  { label: "Responses API", value: "responses" },
-  { label: "Chat Completions API", value: "chat_completions" },
-];
 const storage = reactive({
   image_storage: "r2",
   tg_bot_token: "",
@@ -145,28 +112,12 @@ async function load() {
     config.app_name = values.app_name || "交易日志系统";
     config.default_symbol = values.default_symbol || "XAUUSD";
     config.mcp_enabled = values.mcp_enabled !== "false";
-    config.market_data_url = values.market_data_url || "";
-    config.market_data_key = values.market_data_key || "";
-    config.ai_enabled = values.ai_enabled === "true";
-    config.ai_base_url = values.ai_base_url || "https://api.openai.com/v1";
-    config.ai_api_format = values.ai_api_format || "auto";
-    config.ai_model = values.ai_model || "";
-    config.ai_api_key = values.ai_api_key || "";
-    config.ai_cf_fallback_enabled = values.ai_cf_fallback_enabled !== "false";
-    config.ai_cf_fallback_model =
-      values.ai_cf_fallback_model || "@cf/meta/llama-3.2-3b-instruct";
-    config.ai_cf_daily_neuron_limit = Number(
-      values.ai_cf_daily_neuron_limit || 9000,
-    );
-    config.ai_cf_account_id = values.ai_cf_account_id || "";
-    config.ai_cf_api_token = values.ai_cf_api_token || "";
     storage.image_storage = values.image_storage || "r2";
     storage.tg_bot_token = values.tg_bot_token || "";
     storage.tg_chat_id = values.tg_chat_id || "";
     imageStats.total = imageData.total || 0;
     imageStats.totalBytes = imageData.total_bytes || 0;
     backups.value = backupData;
-    void loadAiModels();
   } finally {
     loading.value = false;
   }
@@ -236,55 +187,11 @@ function remove(item: Setting) {
     },
   });
 }
-async function loadAiModels() {
-  loadingAiModels.value = true;
-  try {
-    const [data, usage] = await Promise.all([
-      api.get<any>("/ai/models"),
-      api.get<any>("/ai/cloudflare-usage"),
-    ]);
-    aiModels.value = (data.models || []).map((value: string) => ({
-      label: value,
-      value,
-    }));
-    cfModels.value = (data.cloudflare_models || []).map((item: any) => ({
-      label: item.label || item.id,
-      value: item.id,
-    }));
-    Object.assign(cfUsage, usage);
-    if (data.warning)
-      message.warning(`主模型列表获取失败，可继续手动输入：${data.warning}`);
-    if (data.cloudflare_warning)
-      message.warning(
-        `Cloudflare 动态目录获取失败，已使用内置当前模型：${data.cloudflare_warning}`,
-      );
-  } catch (error) {
-    message.warning(
-      error instanceof Error
-        ? error.message
-        : "模型列表获取失败，可继续手动输入",
-    );
-  } finally {
-    loadingAiModels.value = false;
-  }
-}
 function configPayload() {
   return {
     app_name: config.app_name,
     default_symbol: config.default_symbol,
     mcp_enabled: String(config.mcp_enabled),
-    market_data_url: config.market_data_url,
-    market_data_key: config.market_data_key,
-    ai_enabled: String(config.ai_enabled),
-    ai_base_url: config.ai_base_url,
-    ai_api_format: config.ai_api_format,
-    ai_model: config.ai_model,
-    ai_api_key: config.ai_api_key,
-    ai_cf_fallback_enabled: String(config.ai_cf_fallback_enabled),
-    ai_cf_fallback_model: config.ai_cf_fallback_model,
-    ai_cf_daily_neuron_limit: String(config.ai_cf_daily_neuron_limit),
-    ai_cf_account_id: config.ai_cf_account_id,
-    ai_cf_api_token: config.ai_cf_api_token,
   };
 }
 async function saveConfig() {
@@ -295,28 +202,6 @@ async function saveConfig() {
     await load();
   } finally {
     saving.value = false;
-  }
-}
-async function testAi(provider: "primary" | "cloudflare") {
-  aiTesting.value = provider;
-  aiTestResult.value = null;
-  try {
-    await api.put("/config", configPayload());
-    const result = await api.post<any>("/ai/test", { provider });
-    aiTestResult.value = result;
-    message.success(
-      `${provider === "primary" ? "主模型" : "Cloudflare 模型"}连接正常`,
-    );
-    await loadAiModels();
-  } catch (error) {
-    aiTestResult.value = {
-      success: false,
-      provider,
-      error: error instanceof Error ? error.message : "测试失败",
-    };
-    message.error(aiTestResult.value.error);
-  } finally {
-    aiTesting.value = "";
   }
 }
 async function saveStorage(showSuccess = true) {
@@ -546,9 +431,7 @@ onBeforeUnmount(() => {
             <div class="panel-head">
               <div>
                 <h3>系统配置</h3>
-                <span class="subtle"
-                  >行情、MCP 与 AI 的敏感密钥只会以掩码形式返回网页</span
-                >
+                <span class="subtle">基础显示与 MCP 服务开关</span>
               </div>
             </div>
             <n-form label-placement="top"
@@ -569,121 +452,7 @@ onBeforeUnmount(() => {
               ><n-alert type="info" :bordered="false"
                 >MCP 端点固定为 /api/mcp，关闭后所有 MCP
                 请求会立即停止服务。</n-alert
-              ><n-divider>td-forex-mcp 行情连接</n-divider
-              ><n-form-item label="行情服务 URL"
-                ><n-input
-                  v-model:value="config.market_data_url"
-                  placeholder="https://fx.example.workers.dev" /></n-form-item
-              ><n-form-item label="行情访问密钥"
-                ><n-input
-                  v-model:value="config.market_data_key"
-                  type="password"
-                  show-password-on="click"
-                  placeholder="留空表示未配置" /></n-form-item
-              ><n-alert type="info" :bordered="false"
-                >K 线页通过服务端调用
-                td-forex-mcp，密钥不会下发到浏览器；页面会定时刷新，并标注数据更新时间。</n-alert
-              ><n-divider>站内 AI 工作台</n-divider
-              ><n-grid responsive="screen" :x-gap="14" :cols="'1 s:2'"
-                ><n-form-item-gi label="启用 AI"
-                  ><n-switch
-                    v-model:value="config.ai_enabled" /></n-form-item-gi
-                ><n-form-item-gi label="API 格式"
-                  ><n-select
-                    v-model:value="config.ai_api_format"
-                    :options="aiFormatOptions" /></n-form-item-gi></n-grid
-              ><n-form-item label="AI API 地址（基础地址或完整端点）"
-                ><n-input
-                  v-model:value="config.ai_base_url"
-                  placeholder="https://api.example.com/v1 或 .../chat/completions" /></n-form-item
-              ><n-form-item label="AI API 密钥"
-                ><n-input
-                  v-model:value="config.ai_api_key"
-                  type="password"
-                  show-password-on="click"
-                  placeholder="配置后仅由 Worker 服务端使用" /></n-form-item
-              ><n-form-item label="主模型"
-                ><n-input-group
-                  ><n-select
-                    v-model:value="config.ai_model"
-                    filterable
-                    tag
-                    :options="aiModels"
-                    :loading="loadingAiModels"
-                    placeholder="自动获取或手动输入模型 ID"
-                  /><n-button :loading="loadingAiModels" @click="loadAiModels"
-                    >获取模型</n-button
-                  ><n-button
-                    :loading="aiTesting === 'primary'"
-                    @click="testAi('primary')"
-                    >测试主模型</n-button
-                  ></n-input-group
-                ></n-form-item
-              ><n-divider>Cloudflare 备用保护</n-divider
-              ><n-form-item label="启用 Cloudflare 备用模型"
-                ><n-switch
-                  v-model:value="config.ai_cf_fallback_enabled" /></n-form-item
-              ><template v-if="config.ai_cf_fallback_enabled"
-                ><n-form-item label="Cloudflare Workers AI 模型"
-                  ><n-select
-                    v-model:value="config.ai_cf_fallback_model"
-                    filterable
-                    tag
-                    :options="cfModels"
-                    placeholder="@cf/meta/llama-3.2-3b-instruct"
-                  /><n-button
-                    style="margin-top: 8px"
-                    :loading="aiTesting === 'cloudflare'"
-                    @click="testAi('cloudflare')"
-                    >测试 Cloudflare 模型</n-button
-                  ></n-form-item
-                ><n-grid responsive="screen" :x-gap="14" :cols="'1 s:2'"
-                  ><n-form-item-gi label="Cloudflare Account ID（可选）"
-                    ><n-input
-                      v-model:value="config.ai_cf_account_id"
-                      placeholder="用于动态读取当前账户可用模型" /></n-form-item-gi
-                  ><n-form-item-gi label="Workers AI Read Token（可选）"
-                    ><n-input
-                      v-model:value="config.ai_cf_api_token"
-                      type="password"
-                      show-password-on="click"
-                      placeholder="只需 Workers AI Read 权限" /></n-form-item-gi></n-grid
-                ><n-grid responsive="screen" :x-gap="14" :cols="1"
-                  ><n-form-item-gi label="UTC 每日神经元保护阈值"
-                    ><n-input-number
-                      v-model:value="config.ai_cf_daily_neuron_limit"
-                      :min="1"
-                      :max="10000"
-                      :step="100" /></n-form-item-gi></n-grid
-                ><n-alert :type="cfUsage.source === 'cloudflare_account' ? 'info' : 'warning'" :bordered="false"
-                  >{{ cfUsage.source === "cloudflare_account" ? "Cloudflare 账户今日真实用量" : "本系统今日本地记录" }}：
-                  {{ Number(cfUsage.neurons).toFixed(2) }} /
-                  {{ cfUsage.neuron_limit }} neurons。仅按神经元保护，不限制调用次数和 Token；00:00 UTC 重置。
-                  <template v-if="cfUsage.source === 'cloudflare_account'">账户统计包含全部 Worker、REST API 与控制台调用；本系统已记录 {{ Number(cfUsage.local_neurons).toFixed(2) }} neurons。</template>
-                  <template v-else>账户统计暂不可用，将按本地记录保护。{{ cfUsage.warning }}</template></n-alert
-                ></template
-              ><n-alert type="info" :bordered="false"
-                >自动识别 /responses 或
-                /chat/completions；主模型超时或报错时才切换备用模型。脑图精修由后台任务执行，不占住页面请求。</n-alert
-              ><n-alert type="warning" :bordered="false"
-                >AI
-                分析会把当前对话和必要的交易数据发送给你配置的模型服务。执行写操作还需要在
-                AI 页面单独开启授权。</n-alert
-              >
-              <n-alert
-                v-if="aiTestResult"
-                :type="aiTestResult.success ? 'success' : 'error'"
-                :bordered="false"
-                >{{ aiTestResult.success ? "连接测试成功" : "连接测试失败" }} ·
-                {{ aiTestResult.model || aiTestResult.provider }} ·
-                {{ aiTestResult.latency_ms || 0 }} ms
-                <template v-if="aiTestResult.usage?.total_tokens">
-                  · {{ aiTestResult.usage.total_tokens }} tokens</template
-                ><template v-if="aiTestResult.usage?.neurons !== undefined">
-                  · {{ Number(aiTestResult.usage.neurons).toFixed(2) }} neurons</template
-                ><template v-if="aiTestResult.error"> · {{ aiTestResult.error }}</template>
-              </n-alert>
-              <div class="modal-actions">
+              ><div class="modal-actions">
                 <n-button type="primary" :loading="saving" @click="saveConfig"
                   >保存系统配置</n-button
                 >

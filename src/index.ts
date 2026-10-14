@@ -23,7 +23,6 @@ import {
 } from './mcp/protocol';
 import { registerSecurityMiddleware } from './middleware/security';
 import { registerAuthRoutes } from './routes/auth';
-import { registerAiMetaRoutes } from './routes/ai-meta';
 import { registerRuleRoutes } from './routes/rules';
 import { registerSettingsRoutes } from './routes/settings';
 import { registerStatsRoutes } from './routes/stats';
@@ -74,7 +73,6 @@ export { hashSessionToken } from './routes/auth';
 export { cloudflareNeurons, consumeAiEventStream, normalizeAiUsage, resolveAiEndpoint, resolveAiModelsEndpoint } from './services/ai-protocol';
 export { chooseAiJobFailureMessage, isRetryableAiJobError } from './services/ai-jobs';
 export {
-  DEFAULT_MINDMAP_REFINEMENT_INSTRUCTIONS,
   normalizeAiMindmapNodes,
   normalizeMindmapNodeType
 } from './services/mindmap-nodes';
@@ -92,7 +90,6 @@ for (const path of [
 ]) {
   app.all(path, context => context.json({ error: 'Not Found' }, 404));
 }
-registerAiMetaRoutes(app);
 registerRuleRoutes(app);
 registerSettingsRoutes(app);
 registerStatsRoutes(app);
@@ -1410,7 +1407,7 @@ app.post('/api/ai/chat/stream', async (c) => {
 const BACKUP_PREFIX = '__backups/';
 const BACKUP_TABLES = [
   'users','app_config','settings','trading_rules','trading_systems','trading_system_nodes','mindmap_versions',
-  'mindmap_refinement_drafts','trades','trade_strategy_snapshots','trade_rule_checks','monthly_stats','image_folders','images','share_links','mcp_tokens','ai_conversations','ai_action_batches','ai_messages'
+  'mindmap_refinement_drafts','trades','trade_strategy_snapshots','trade_rule_checks','monthly_stats','image_folders','images','daily_chart_images','share_links','mcp_tokens','ai_conversations','ai_action_batches','ai_messages'
 ] as const;
 const BACKUP_DELETE_ORDER = [...BACKUP_TABLES].reverse();
 type BackupTable = typeof BACKUP_TABLES[number];
@@ -1733,7 +1730,7 @@ async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<void> {
 }
 
 async function restoreBackupTables(db: D1Database, tables: Record<BackupTable,Record<string,unknown>[]>): Promise<void> {
-  const addedLater=new Set<BackupTable>(['mindmap_refinement_drafts','trade_strategy_snapshots','trade_rule_checks','image_folders','share_links']);
+  const addedLater=new Set<BackupTable>(['mindmap_refinement_drafts','trade_strategy_snapshots','trade_rule_checks','image_folders','daily_chart_images','share_links']);
   for (const table of BACKUP_TABLES) if (!Array.isArray(tables[table])) {
     if(addedLater.has(table))tables[table]=[];
     else throw new Error(`备份缺少数据表：${table}`);
@@ -2080,6 +2077,10 @@ app.post('/api/mcp', async (c) => {
     }, id));
   }
 
+  if (method !== 'tools_list' && !MCP_TOOLS.some(tool => tool.name === method)) {
+    return c.json(jsonRpcError(-32601, `Method not found: ${method}`, id), 404);
+  }
+
   // 写方法需要 write / admin 权限
   if (MCP_WRITE_METHODS.has(method) && auth.permissions === 'read') {
     return c.json(jsonRpcError(-32002, 'Forbidden: this method requires write permission (token is read-only)', id), 403);
@@ -2141,14 +2142,16 @@ app.post('/api/mcp', async (c) => {
         const countResult = await db.prepare(countSql).bind(...queryParams).first<{ total: number }>();
         const total = countResult?.total || 0;
 
-        const sql = `SELECT t.*, s.name AS trading_system_name
+        const sql = `SELECT t.*, s.name AS trading_system_name,dc.image_url AS daily_chart_image
           FROM trades t LEFT JOIN trading_systems s ON s.id = t.trading_system_id
+          LEFT JOIN daily_chart_images dc ON dc.trade_date=substr(t.entry_time,1,10)
           ${where} ORDER BY t.entry_time DESC LIMIT ? OFFSET ?`;
         const trades = await db.prepare(sql).bind(...queryParams, limit, offset).all();
 
         const tradeRows = (trades.results as any[]).map(trade => ({
           ...trade,
-          chart_image: absoluteUrl(c.req.url, trade.chart_image)
+          daily_chart_image: absoluteUrl(c.req.url, trade.daily_chart_image),
+          chart_image: absoluteUrl(c.req.url, trade.daily_chart_image || trade.chart_image)
         }));
         return c.json(jsonRpcResult({ trades: tradeRows, total, page, limit }, id));
       }
@@ -2158,15 +2161,16 @@ app.post('/api/mcp', async (c) => {
           return c.json(jsonRpcError(-32602, 'Invalid params: id is required', id), 400);
         }
         const trade = await db.prepare(
-          `SELECT t.*,COALESCE(ss.system_name,s.name) AS trading_system_name,ss.version_id AS strategy_version_id,ss.created_at AS strategy_snapshot_at,CASE WHEN ss.id IS NULL THEN 0 ELSE 1 END AS strategy_snapshot_locked
-           FROM trades t LEFT JOIN trading_systems s ON s.id = t.trading_system_id LEFT JOIN trade_strategy_snapshots ss ON ss.trade_id=t.id WHERE t.id = ?`
+          `SELECT t.*,COALESCE(ss.system_name,s.name) AS trading_system_name,dc.image_url AS daily_chart_image,ss.version_id AS strategy_version_id,ss.created_at AS strategy_snapshot_at,CASE WHEN ss.id IS NULL THEN 0 ELSE 1 END AS strategy_snapshot_locked
+           FROM trades t LEFT JOIN trading_systems s ON s.id = t.trading_system_id LEFT JOIN trade_strategy_snapshots ss ON ss.trade_id=t.id LEFT JOIN daily_chart_images dc ON dc.trade_date=substr(t.entry_time,1,10) WHERE t.id = ?`
         ).bind(String(params.id)).first();
         if (!trade) {
           return c.json(jsonRpcError(-32000, 'Trade not found', id), 404);
         }
         return c.json(jsonRpcResult({
           ...trade as any,
-          chart_image: absoluteUrl(c.req.url, (trade as any).chart_image)
+          daily_chart_image: absoluteUrl(c.req.url, (trade as any).daily_chart_image),
+          chart_image: absoluteUrl(c.req.url, (trade as any).daily_chart_image || (trade as any).chart_image)
         }, id));
       }
 
@@ -2292,9 +2296,13 @@ app.post('/api/mcp', async (c) => {
 
       // ---------- images ----------
       case 'upload_chart_image': {
-        if (!params || !params.image_base64) {
-          return c.json(jsonRpcError(-32602, 'Invalid params: image_base64 is required', id), 400);
+        if (!params || !params.image_base64 || !params.trade_date) {
+          return c.json(jsonRpcError(-32602, 'Invalid params: image_base64 and trade_date are required', id), 400);
         }
+        const tradeDate = String(params.trade_date);
+        const validDate = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(tradeDate)
+          && new Date(`${tradeDate}T00:00:00.000Z`).toISOString().slice(0, 10) === tradeDate;
+        if (!validDate) return c.json(jsonRpcError(-32602, 'Invalid params: trade_date must be a valid YYYY-MM-DD date', id), 400);
         const filename = params.filename || `mcp-chart-${Date.now()}.png`;
         const mime = inferMime(filename, params.mime_type);
 
@@ -2307,7 +2315,7 @@ app.post('/api/mcp', async (c) => {
 
         const imageCategory = String(params.category || '').trim();
         if (!(await imageCategoryExists(db, imageCategory))) {
-          return c.json(jsonRpcError(-32602, 'Invalid params: image category does not exist; create it with add_setting(category=image_category)', id), 400);
+          return c.json(jsonRpcError(-32602, 'Invalid params: image category does not exist', id), 400);
         }
         let imageResourceUrl: string | null;
         try {
@@ -2333,12 +2341,10 @@ app.post('/api/mcp', async (c) => {
         if (!stored.ok) {
           return c.json(jsonRpcError(-32000, `Upload failed: ${stored.error}`, id), 400);
         }
-
-        // 可选：直接关联到某笔交易
-        if (params.trade_id) {
-          await db.prepare("UPDATE trades SET chart_image = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(stored.url, String(params.trade_id)).run();
-        }
+        await db.prepare(
+          `INSERT INTO daily_chart_images (trade_date,image_id,image_url) VALUES (?,?,?)
+           ON CONFLICT(trade_date) DO UPDATE SET image_id=excluded.image_id,image_url=excluded.image_url,updated_at=datetime('now')`
+        ).bind(tradeDate, stored.id, stored.url).run();
 
         return c.json(jsonRpcResult({
           success: true,
@@ -2349,8 +2355,8 @@ app.post('/api/mcp', async (c) => {
           storage: stored.storage,
           tg_uploaded: stored.tg_uploaded || false,
           tg_error: stored.tg_error || null,
-          trade_id: params.trade_id || null,
-          note: 'url 是无需登录即可在线查看、分享或嵌入的绝对链接'
+          trade_date: tradeDate,
+          note: '该日期的全部交易会共用此图；url 可在线查看、分享或嵌入'
         }, id));
       }
 

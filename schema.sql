@@ -131,6 +131,15 @@ CREATE TABLE images (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 , public_id TEXT, caption TEXT, tg_message_id TEXT, display_name TEXT, category TEXT, tags TEXT, resource_url TEXT,
   folder_id INTEGER REFERENCES image_folders(id) ON DELETE SET NULL);
+CREATE TABLE daily_chart_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trade_date TEXT NOT NULL UNIQUE,
+  image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+  image_url TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_daily_chart_images_date ON daily_chart_images(trade_date);
 CREATE TABLE share_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   token TEXT NOT NULL UNIQUE,
@@ -442,4 +451,3 @@ INSERT OR IGNORE INTO d1_migrations(name) VALUES
   ('0011_ai_stream_news_usage.sql');
 
 COMMIT;
-

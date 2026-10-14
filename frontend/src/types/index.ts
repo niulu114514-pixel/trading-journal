@@ -23,6 +23,8 @@ export interface Trade {
   result?: '胜' | '败' | '平' | null
   review?: string | null
   chart_image?: string | null
+  daily_chart_id?: number | null
+  daily_chart_image?: string | null
   created_at: string
   updated_at: string
 }

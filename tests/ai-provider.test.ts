@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { chooseAiJobFailureMessage, cloudflareNeurons, consumeAiEventStream, DEFAULT_MINDMAP_REFINEMENT_INSTRUCTIONS, isRetryableAiJobError, normalizeAiMindmapNodes, normalizeAiUsage, normalizeMindmapNodeType, orderMindmapNodesParentFirst, resolveAiEndpoint, resolveAiModelsEndpoint } from '../src/index';
+import { chooseAiJobFailureMessage, cloudflareNeurons, consumeAiEventStream, isRetryableAiJobError, normalizeAiMindmapNodes, normalizeAiUsage, normalizeMindmapNodeType, orderMindmapNodesParentFirst, resolveAiEndpoint, resolveAiModelsEndpoint } from '../src/index';
+import { DEFAULT_MINDMAP_REFINEMENT_INSTRUCTIONS } from '../src/services/mindmap-nodes';
 
 describe('AI provider endpoint resolution', () => {
   it('keeps a complete Chat Completions endpoint unchanged', () => {

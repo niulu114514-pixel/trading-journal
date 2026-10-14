@@ -31,6 +31,10 @@ const tradeFieldsSchema = z.object({
   chart_image: z.string().min(1).max(500).nullable().optional()
 });
 
+const dailyChartSchema = z.object({
+  image_id: z.number().int().positive()
+});
+
 type TradeRouteDependencies = {
   captureTradeStrategySnapshot(db: D1Database, tradeId: number, systemId: number | null | undefined): Promise<void>;
   updateMonthlyStats(db: D1Database, entryTime: string | null): Promise<void>;
@@ -42,7 +46,52 @@ function boundedInteger(value: string | undefined, fallback: number, minimum: nu
   return Number.isFinite(parsed) ? Math.min(Math.max(parsed, minimum), maximum) : fallback;
 }
 
+function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(value)) return false;
+  return new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
+}
+
 export function registerTradeRoutes(app: Hono<AppEnv>, dependencies: TradeRouteDependencies): void {
+  app.get('/api/daily-charts/:date', async context => {
+    const tradeDate = context.req.param('date');
+    if (!isCalendarDate(tradeDate)) return context.json({ error: '日期必须使用有效的 YYYY-MM-DD 格式' }, 400);
+    const chart = await context.env.DB.prepare(
+      'SELECT id,trade_date,image_id,image_url,created_at,updated_at FROM daily_chart_images WHERE trade_date=?'
+    ).bind(tradeDate).first<Record<string, unknown>>();
+    return context.json({ chart: chart || null });
+  });
+
+  app.put('/api/daily-charts/:date', async context => {
+    const tradeDate = context.req.param('date');
+    if (!isCalendarDate(tradeDate)) return context.json({ error: '日期必须使用有效的 YYYY-MM-DD 格式' }, 400);
+    const parsed = dailyChartSchema.safeParse(await context.req.json().catch(() => null));
+    if (!parsed.success) return context.json({ error: '请选择已上传的图片' }, 400);
+    const image = await context.env.DB.prepare(
+      'SELECT id,key,storage,tg_file_id,public_id FROM images WHERE id=?'
+    ).bind(parsed.data.image_id).first<{ id: number; key: string; storage: string; tg_file_id: string | null; public_id: string | null }>();
+    if (!image) return context.json({ error: '图片不存在或已删除' }, 404);
+    const imageUrl = image.public_id
+      ? `/i/${image.public_id}`
+      : image.storage === 'r2'
+        ? `/api/image/r2/${encodeURIComponent(image.key)}`
+        : `/api/image/tg/${encodeURIComponent(image.tg_file_id || image.key)}`;
+    await context.env.DB.prepare(
+      `INSERT INTO daily_chart_images (trade_date,image_id,image_url) VALUES (?,?,?)
+       ON CONFLICT(trade_date) DO UPDATE SET image_id=excluded.image_id,image_url=excluded.image_url,updated_at=datetime('now')`
+    ).bind(tradeDate, image.id, imageUrl).run();
+    const chart = await context.env.DB.prepare(
+      'SELECT id,trade_date,image_id,image_url,created_at,updated_at FROM daily_chart_images WHERE trade_date=?'
+    ).bind(tradeDate).first<Record<string, unknown>>();
+    return context.json({ success: true, chart });
+  });
+
+  app.delete('/api/daily-charts/:date', async context => {
+    const tradeDate = context.req.param('date');
+    if (!isCalendarDate(tradeDate)) return context.json({ error: '日期必须使用有效的 YYYY-MM-DD 格式' }, 400);
+    await context.env.DB.prepare('DELETE FROM daily_chart_images WHERE trade_date=?').bind(tradeDate).run();
+    return context.json({ success: true });
+  });
+
   app.get('/api/trades', async context => {
     const page = boundedInteger(context.req.query('page'), 1, 1, 1_000_000);
     const limit = boundedInteger(context.req.query('limit'), 50, 1, 200);
@@ -78,9 +127,11 @@ export function registerTradeRoutes(app: Hono<AppEnv>, dependencies: TradeRouteD
       .bind(...parameters).first<{ total: number }>();
     const trades = await context.env.DB.prepare(
       `SELECT t.*, COALESCE(ss.system_name,s.name) AS trading_system_name,
+        dc.id AS daily_chart_id,dc.image_url AS daily_chart_image,
         CASE WHEN ss.id IS NULL THEN 0 ELSE 1 END AS strategy_snapshot_locked
        FROM trades t LEFT JOIN trading_systems s ON s.id=t.trading_system_id
        LEFT JOIN trade_strategy_snapshots ss ON ss.trade_id=t.id
+       LEFT JOIN daily_chart_images dc ON dc.trade_date=substr(t.entry_time,1,10)
        ${whereSql} ORDER BY t.entry_time DESC LIMIT ? OFFSET ?`
     ).bind(...parameters, limit, (page - 1) * limit).all();
     return context.json({ trades: trades.results, total: count?.total || 0, page, limit });
@@ -90,10 +141,12 @@ export function registerTradeRoutes(app: Hono<AppEnv>, dependencies: TradeRouteD
     const id = context.req.param('id');
     const trade = await context.env.DB.prepare(
       `SELECT t.*, COALESCE(ss.system_name,s.name) AS trading_system_name,
+       dc.id AS daily_chart_id,dc.image_url AS daily_chart_image,
        ss.version_id AS strategy_version_id,ss.created_at AS strategy_snapshot_at,
        CASE WHEN ss.id IS NULL THEN 0 ELSE 1 END AS strategy_snapshot_locked
        FROM trades t LEFT JOIN trading_systems s ON s.id=t.trading_system_id
-       LEFT JOIN trade_strategy_snapshots ss ON ss.trade_id=t.id WHERE t.id=?`
+       LEFT JOIN trade_strategy_snapshots ss ON ss.trade_id=t.id
+       LEFT JOIN daily_chart_images dc ON dc.trade_date=substr(t.entry_time,1,10) WHERE t.id=?`
     ).bind(id).first<Record<string, unknown>>();
     if (!trade) return context.json({ error: 'Not found' }, 404);
     return context.json(trade);

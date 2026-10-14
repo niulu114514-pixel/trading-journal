@@ -1,5 +1,6 @@
 import { applyD1Migrations, env, SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { MCP_TOOLS } from '../src/mcp/catalog';
 
 declare module 'cloudflare:test' {
   interface ProvidedEnv extends Env {
@@ -22,6 +23,8 @@ async function setupOwner(): Promise<string> {
 beforeEach(async () => {
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM daily_chart_images'),
+    env.DB.prepare('DELETE FROM images'),
     env.DB.prepare('DELETE FROM trade_rule_checks'),
     env.DB.prepare('DELETE FROM trade_strategy_snapshots'),
     env.DB.prepare('DELETE FROM trades'),
@@ -115,5 +118,45 @@ describe('modular route registration', () => {
 
     const settings = await SELF.fetch('https://example.com/api/settings?category=symbol', { headers: { Cookie: cookie } });
     expect(await settings.json<Array<{ value: string }>>()).toEqual(expect.arrayContaining([expect.objectContaining({ value: 'XAUUSD' })]));
+  });
+
+  it('shares one daily chart across every trade on the selected date', async () => {
+    const cookie = await setupOwner();
+    await env.DB.prepare(
+      `INSERT INTO images (key,storage,filename,mime_type,size,public_id)
+       VALUES ('daily-chart-test','r2','2026-10-14.png','image/png',12,'0123456789abcdef0123456789abcdef')`
+    ).run();
+    const image = await env.DB.prepare("SELECT id FROM images WHERE key='daily-chart-test'").first<{ id: number }>();
+    expect(image?.id).toBeTruthy();
+
+    const linked = await SELF.fetch('https://example.com/api/daily-charts/2026-10-14', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ image_id: image!.id })
+    });
+    expect(linked.status).toBe(200);
+
+    for (const symbol of ['XAUUSD', 'EURUSD']) {
+      const created = await SELF.fetch('https://example.com/api/trades', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ symbol, entry_time: '2026-10-14', direction: '多', lots: 1, timeframe: ['5M'] })
+      });
+      expect(created.status).toBe(201);
+    }
+
+    const response = await SELF.fetch('https://example.com/api/trades?month=2026-10', { headers: { Cookie: cookie } });
+    const payload = await response.json<{ trades: Array<{ daily_chart_image: string }> }>();
+    expect(payload.trades).toHaveLength(2);
+    expect(payload.trades.every(trade => trade.daily_chart_image === '/i/0123456789abcdef0123456789abcdef')).toBe(true);
+
+    const removed = await SELF.fetch('https://example.com/api/daily-charts/2026-10-14', { method: 'DELETE', headers: { Cookie: cookie } });
+    expect(removed.status).toBe(200);
+    const after = await SELF.fetch('https://example.com/api/trades?month=2026-10', { headers: { Cookie: cookie } });
+    expect((await after.json<{ trades: Array<{ daily_chart_image: null }> }>()).trades.every(trade => trade.daily_chart_image === null)).toBe(true);
+  });
+
+  it('exposes only the compact core MCP tool set', () => {
+    const names = MCP_TOOLS.map(tool => tool.name);
+    expect(names).toHaveLength(17);
+    expect(names).toEqual(expect.arrayContaining(['list_trades', 'get_stats', 'list_rules', 'list_systems', 'upload_chart_image']));
+    expect(names).not.toEqual(expect.arrayContaining(['get_market_candles', 'refine_mindmap', 'reconcile_images', 'add_setting']));
   });
 });

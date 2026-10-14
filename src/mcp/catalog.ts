@@ -49,15 +49,10 @@ const TRADE_TOOL_PROPERTIES = {
   return_amount: { type: 'number', description: '盈亏金额' },
   risk_reward_ratio: { type: 'number', description: '直接填写风险/回报比原始数值，例如 0.71' },
   result: { type: 'string', enum: ['胜', '败', '平'], description: '交易结果' },
-  notes: { type: 'string', description: '交易笔记（保存到复盘字段）' },
-  chart_image_url: { type: 'string', description: 'K 线图 URL' },
-  chart_image_base64: { type: 'string', description: 'K 线图 base64 内容（与 URL 二选一）' },
-  chart_image_filename: { type: 'string', description: 'base64 图片文件名，建议包含扩展名' },
-  chart_image_mime: { type: 'string', enum: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] },
-  caption: { type: 'string', description: '图片备注' }
+  notes: { type: 'string', description: '交易笔记（保存到复盘字段）' }
 };
 
-export const MCP_TOOLS: McpToolDef[] = [
+const MCP_TOOL_CATALOG: McpToolDef[] = [
   {
     name: 'list_trades', desc: '获取交易列表（支持 symbol/result/month 筛选与分页）',
     inputSchema: OBJ({
@@ -73,11 +68,11 @@ export const MCP_TOOLS: McpToolDef[] = [
     inputSchema: OBJ({ id: { type: 'integer', description: '交易 ID' } }, ['id'])
   },
   {
-    name: 'add_trade', desc: '添加新交易（支持 chart_image_url 或 chart_image_base64 直接附图）',
+    name: 'add_trade', desc: '添加新交易；每日 K 线请使用 upload_chart_image 按日期统一上传',
     inputSchema: OBJ(TRADE_TOOL_PROPERTIES, ['symbol', 'entry_time'])
   },
   {
-    name: 'update_trade', desc: '更新交易记录（支持 chart_image_url / chart_image_base64）',
+    name: 'update_trade', desc: '更新交易记录',
     inputSchema: OBJ({ id: { type: 'integer', description: '交易 ID' }, ...TRADE_TOOL_PROPERTIES }, ['id'])
   },
   {
@@ -273,7 +268,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     })
   },
   {
-    name: 'upload_chart_image', desc: '上传 K 线图或图床图片（base64），可命名、分类、添加标签并关联 trade_id；返回图片 URL',
+    name: 'upload_chart_image', desc: '按交易日期上传一张全天 K 线图，自动关联该日期的全部交易',
     inputSchema: OBJ({
       image_base64: { type: 'string', description: '图片 base64 内容（支持 data: 前缀）' },
       filename: { type: 'string', description: '文件名，用于推断 MIME，默认 mcp-chart-<ts>.png' },
@@ -283,8 +278,8 @@ export const MCP_TOOLS: McpToolDef[] = [
       tags: { type: 'string', description: '逗号分隔标签' },
       resource_url: { type: 'string', description: '关联视频或网盘资料链接（http/https）' },
       caption: { type: 'string', description: '图片说明' },
-      trade_id: { type: 'integer', description: '可选：关联的交易 ID' }
-    }, ['image_base64'])
+      trade_date: { type: 'string', description: '交易日期，格式 YYYY-MM-DD；同一天的全部交易共用此图' }
+    }, ['image_base64', 'trade_date'])
   },
   {
     name: 'set_trade_chart', desc: '为已存在的交易设置 K 线图',
@@ -339,3 +334,13 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: 'reconcile_images', desc: '对账 R2 与图片元数据，清理已从 R2 手动删除的残留记录'
   }
 ];
+
+const CORE_MCP_TOOL_NAMES = new Set([
+  'list_trades', 'get_trade', 'add_trade', 'update_trade', 'delete_trade',
+  'get_stats', 'get_trend',
+  'list_rules', 'add_rule', 'update_rule',
+  'list_systems', 'get_system', 'create_detailed_mindmap', 'update_system',
+  'upload_chart_image', 'list_images', 'get_image'
+]);
+
+export const MCP_TOOLS: McpToolDef[] = MCP_TOOL_CATALOG.filter(tool => CORE_MCP_TOOL_NAMES.has(tool.name));
