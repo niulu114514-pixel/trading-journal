@@ -22,7 +22,6 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes('@vue-flow')) return 'vue-flow'
-          if (id.includes('lightweight-charts')) return 'charts'
           if (id.includes('node_modules/vue') || id.includes('node_modules/pinia')) return 'vue-core'
         }
       }

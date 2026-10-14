@@ -14,12 +14,9 @@ const glyph = (value: string) => () => h(NIcon, null, { default: () => h('span',
 const menuOptions = [
   { label: '数据看板', key: '/dashboard', icon: glyph('▦') },
   { label: '交易日志', key: '/journal', icon: glyph('◆') },
-  { label: 'K线行情', key: '/charts', icon: glyph('⌁') },
-  { label: '财经新闻', key: '/news', icon: glyph('◫') },
   { label: '图片图床', key: '/images', icon: glyph('▧') },
   { label: '脑图', key: '/systems', icon: glyph('⌘') },
   { label: '交易规则', key: '/rules', icon: glyph('▽') },
-  { label: 'AI 助手', key: '/ai', icon: glyph('✧') },
   { type: 'divider', key: 'd1' },
   { label: '设置', key: '/settings', icon: glyph('✦') },
   { label: 'MCP 服务', key: '/mcp', icon: glyph('▤') }

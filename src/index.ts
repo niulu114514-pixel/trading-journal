@@ -29,7 +29,6 @@ import { registerSettingsRoutes } from './routes/settings';
 import { registerStatsRoutes } from './routes/stats';
 import { registerTradeRoutes } from './routes/trades';
 import { registerMcpTokenRoutes } from './routes/mcp-tokens';
-import { registerNewsRoutes } from './routes/news';
 import {
   MARKET_NEWS_SOURCE_IDS,
   compactWebSearchContext,
@@ -84,13 +83,21 @@ export { orderMindmapNodesParentFirst } from './services/mindmaps';
 const app = new Hono<AppEnv>();
 registerSecurityMiddleware(app);
 registerAuthRoutes(app);
+for (const path of [
+  '/api/ai/conversations',
+  '/api/ai/conversations/:id',
+  '/api/ai/action-batches/:id/rollback',
+  '/api/ai/chat',
+  '/api/ai/chat/stream'
+]) {
+  app.all(path, context => context.json({ error: 'Not Found' }, 404));
+}
 registerAiMetaRoutes(app);
 registerRuleRoutes(app);
 registerSettingsRoutes(app);
 registerStatsRoutes(app);
 registerTradeRoutes(app, { captureTradeStrategySnapshot, updateMonthlyStats, rebuildMonth });
 registerMcpTokenRoutes(app);
-registerNewsRoutes(app);
 registerSystemRoutes(app);
 registerShareRoutes(app, { serveTelegramImage });
 

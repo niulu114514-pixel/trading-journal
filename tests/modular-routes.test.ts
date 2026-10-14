@@ -80,6 +80,17 @@ describe('modular route registration', () => {
     expect(reversedRange.status).toBe(400);
   });
 
+  it('does not expose removed chart, news, or AI assistant endpoints', async () => {
+    const cookie = await setupOwner();
+    const responses = await Promise.all([
+      SELF.fetch('https://example.com/api/kline', { headers: { Cookie: cookie } }),
+      SELF.fetch('https://example.com/api/news', { headers: { Cookie: cookie } }),
+      SELF.fetch('https://example.com/api/ai/conversations', { headers: { Cookie: cookie } }),
+      SELF.fetch('https://example.com/api/ai/chat', { method: 'POST', headers: { Cookie: cookie } })
+    ]);
+    expect(responses.map(response => response.status)).toEqual([404, 404, 404, 404]);
+  });
+
   it('stores multiple timeframes and keeps the entered risk/reward ratio unchanged', async () => {
     const cookie = await setupOwner();
     const created = await SELF.fetch('https://example.com/api/trades', {

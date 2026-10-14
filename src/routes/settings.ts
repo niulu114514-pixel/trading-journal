@@ -1,7 +1,6 @@
 import type { Hono } from 'hono';
 import type { AppEnv } from '../app-types';
 import { ensureSensitiveConfigEncrypted, encryptConfigValue, MASKED_CONFIG_VALUE, SENSITIVE_CONFIG_KEYS } from '../services/config';
-import { fetchMarketCandles } from '../services/market';
 
 export function registerSettingsRoutes(app: Hono<AppEnv>): void {
   // ===================== Settings CRUD API =====================
@@ -246,29 +245,6 @@ export function registerSettingsRoutes(app: Hono<AppEnv>): void {
     }
 
     return c.json({ success: true });
-  });
-
-  // ===== 行情 K 线代理（联动 td-forex-mcp，服务端转发，密钥不外泄） =====
-  app.get('/api/kline', async (c) => {
-    const db = c.env.DB;
-    const symbol = c.req.query('symbol') || 'XAU/USD';
-    const interval = c.req.query('interval') || '1day';
-    const outputsize = Number(c.req.query('outputsize') || 120);
-
-    try {
-      const data = await fetchMarketCandles(db, {
-        symbol,
-        interval,
-        outputsize,
-        fresh: ['1', 'true', 'yes'].includes((c.req.query('fresh') || '').toLowerCase())
-      },c.env.CONFIG_ENCRYPTION_KEY,{service:c.env.TD_FOREX,signal:c.req.raw.signal});
-      c.header('Cache-Control', 'no-store');
-      return c.json(data);
-    } catch (e: any) {
-      const message = e?.message || '网络错误';
-      const status = /未配置|无效|不受支持/.test(message) ? 400 : 502;
-      return c.json({ error: `无法获取行情: ${message}` }, status);
-    }
   });
 
   }
